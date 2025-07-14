@@ -1,5 +1,5 @@
 {
-  "owner": "6285887776722",
+  "owner": "923070458069",
   "owner_name": "Wildan Izzudin",
   "database": "data",
   "limit": 15,
@@ -16,7 +16,7 @@
   "evaluate_chars": ["=>", "~>", "<", ">", "$"],
   "pairing": {
     "state": true,
-    "number": 923018706705
+    "number": 923070458069
   },
   "telegram_bridge": {
     "welcome_message": true
