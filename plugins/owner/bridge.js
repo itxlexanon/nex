@@ -53,11 +53,12 @@ exports.run = {
         case "sync":
           client.reply(m.chat, Func.texted("bold", "🔄 Syncing contacts with Telegram..."), m)
           try {
-            await global.telegramBridge.syncContacts()
+            const contactCount = await global.telegramBridge.syncContacts()
             await global.telegramBridge.updateTopicNames()
+            await global.telegramBridge.saveMappingsToDb()
             client.reply(
               m.chat,
-              Func.texted("bold", `✅ Successfully synced ${global.telegramBridge.contactMappings.size} contacts.`),
+              Func.texted("bold", `✅ Contact sync completed!\n\n📞 Total contacts: ${contactCount}\n💾 Mappings saved to database`),
               m,
             )
           } catch (error) {
