@@ -97,6 +97,62 @@ const connect = async () => {
 
       /* write connection log */
       if (res && typeof res === "object" && res.message) Func.logFile(res.message)
+
+      // Moved Telegram Bridge initialization and contact sync here
+      client.ev.on("connection.update", async (update) => {
+        const { connection, lastDisconnect, qr } = update;
+
+        if (qr) {
+          console.log(colors.cyan('Generated QR:'), qr);
+          // You might want to send this QR to Telegram here if not handled elsewhere
+        }
+
+        if (connection === 'close') {
+          const statusCode = lastDisconnect?.error?.output?.statusCode || 0;
+          const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+
+          if (shouldReconnect) {
+            console.log(colors.yellow('Connection closed, reconnecting...'));
+            connect(); // Reconnect
+          } else {
+            console.error(colors.red('Connection closed permanently. Please delete auth_info and restart.'));
+            process.exit(1);
+          }
+        } else if (connection === 'open') {
+          console.log(colors.green('WhatsApp connection opened successfully!'));
+          
+          // Telegram Bridge initialization and contact sync
+          if (process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHAT_ID) {
+            try {
+              // Initialize telegramBridge if it hasn't been already
+              if (!telegramBridge) {
+                telegramBridge = new TelegramBridge(client.sock, database);
+                global.telegramBridge = telegramBridge; // Set global reference
+              }
+              
+              await telegramBridge.initialize(); // Initialize Telegram Bridge (without calling syncContacts within its own initialize)
+              await telegramBridge.loadMappingsFromDb(); // Ensure mappings are loaded from DB
+              await telegramBridge.setupWhatsAppHandlers(); // Set up WhatsApp handlers for the bridge
+
+              // **********************************************
+              // NOW, call syncContacts after connection is open and user is loaded
+              await telegramBridge.syncContacts();
+              // **********************************************
+
+              await telegramBridge.updateTopicNames(); // Update topics after sync
+              await telegramBridge.sendStartMessage(); // Send start message
+              
+              console.log(colors.green('Contacts synced and Telegram bridge fully operational.'));
+            } catch (error) {
+              console.error(colors.red("❌ Error during post-connection Telegram bridge setup or contact sync:"), error);
+              global.telegramBridge = null; // Clear global reference on error
+            }
+          } else {
+            console.warn(colors.yellow("⚠️ Telegram bridge disabled - missing environment variables"));
+            global.telegramBridge = null;
+          }
+        }
+      });
     })
 
     /* print error */
@@ -104,62 +160,6 @@ const connect = async () => {
       console.error(colors.red(error.message))
       if (error && typeof error === "object" && error.message) Func.logFile(error.message)
     })
-
-    // Moved Telegram Bridge initialization and contact sync here
-    client.ev.on("connection.update", async (update) => {
-      const { connection, lastDisconnect, qr } = update;
-
-      if (qr) {
-        console.log(colors.cyan('Generated QR:'), qr);
-        // You might want to send this QR to Telegram here if not handled elsewhere
-      }
-
-      if (connection === 'close') {
-        const statusCode = lastDisconnect?.error?.output?.statusCode || 0;
-        const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
-
-        if (shouldReconnect) {
-          console.log(colors.yellow('Connection closed, reconnecting...'));
-          connect(); // Reconnect
-        } else {
-          console.error(colors.red('Connection closed permanently. Please delete auth_info and restart.'));
-          process.exit(1);
-        }
-      } else if (connection === 'open') {
-        console.log(colors.green('WhatsApp connection opened successfully!'));
-        
-        // Telegram Bridge initialization and contact sync
-        if (process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHAT_ID) {
-          try {
-            // Initialize telegramBridge if it hasn't been already
-            if (!telegramBridge) {
-              telegramBridge = new TelegramBridge(client.sock, database);
-              global.telegramBridge = telegramBridge; // Set global reference
-            }
-            
-            await telegramBridge.initialize(); // Initialize Telegram Bridge (without calling syncContacts within its own initialize)
-            await telegramBridge.loadMappingsFromDb(); // Ensure mappings are loaded from DB
-            await telegramBridge.setupWhatsAppHandlers(); // Set up WhatsApp handlers for the bridge
-
-            // **********************************************
-            // NOW, call syncContacts after connection is open and user is loaded
-            await telegramBridge.syncContacts();
-            // **********************************************
-
-            await telegramBridge.updateTopicNames(); // Update topics after sync
-            await telegramBridge.sendStartMessage(); // Send start message
-            
-            console.log(colors.green('Contacts synced and Telegram bridge fully operational.'));
-          } catch (error) {
-            console.error(colors.red("❌ Error during post-connection Telegram bridge setup or contact sync:"), error);
-            global.telegramBridge = null; // Clear global reference on error
-          }
-        } else {
-          console.warn(colors.yellow("⚠️ Telegram bridge disabled - missing environment variables"));
-          global.telegramBridge = null;
-        }
-      }
-    });
 
 
     /* bot is connected */
@@ -243,7 +243,7 @@ const connect = async () => {
         if (cleanedCount > 0) {
           console.log(colors.cyan(`🧹 Cleaned up ${cleanedCount} old anti-delete spam entries from database.`))
           await database.save(global.db) // Save after cleanup
-        }
+          }
       }, env.cooldown * 1000) // Run cleanup every `cooldown` seconds
 
       /* backup database every day at 12:00 PM (send .json file to owner) */
