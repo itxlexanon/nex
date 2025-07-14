@@ -105,31 +105,68 @@ const connect = async () => {
       if (error && typeof error === "object" && error.message) Func.logFile(error.message)
     })
 
+    // Moved Telegram Bridge initialization and contact sync here
+    client.ev.on("connection.update", async (update) => {
+      const { connection, lastDisconnect, qr } = update;
+
+      if (qr) {
+        console.log(colors.cyan('Generated QR:'), qr);
+        // You might want to send this QR to Telegram here if not handled elsewhere
+      }
+
+      if (connection === 'close') {
+        const statusCode = lastDisconnect?.error?.output?.statusCode || 0;
+        const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+
+        if (shouldReconnect) {
+          console.log(colors.yellow('Connection closed, reconnecting...'));
+          connect(); // Reconnect
+        } else {
+          console.error(colors.red('Connection closed permanently. Please delete auth_info and restart.'));
+          process.exit(1);
+        }
+      } else if (connection === 'open') {
+        console.log(colors.green('WhatsApp connection opened successfully!'));
+        
+        // Telegram Bridge initialization and contact sync
+        if (process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHAT_ID) {
+          try {
+            // Initialize telegramBridge if it hasn't been already
+            if (!telegramBridge) {
+              telegramBridge = new TelegramBridge(client.sock, database);
+              global.telegramBridge = telegramBridge; // Set global reference
+            }
+            
+            await telegramBridge.initialize(); // Initialize Telegram Bridge (without calling syncContacts within its own initialize)
+            await telegramBridge.loadMappingsFromDb(); // Ensure mappings are loaded from DB
+            await telegramBridge.setupWhatsAppHandlers(); // Set up WhatsApp handlers for the bridge
+
+            // **********************************************
+            // NOW, call syncContacts after connection is open and user is loaded
+            await telegramBridge.syncContacts();
+            // **********************************************
+
+            await telegramBridge.updateTopicNames(); // Update topics after sync
+            await telegramBridge.sendStartMessage(); // Send start message
+            
+            console.log(colors.green('Contacts synced and Telegram bridge fully operational.'));
+          } catch (error) {
+            console.error(colors.red("❌ Error during post-connection Telegram bridge setup or contact sync:"), error);
+            global.telegramBridge = null; // Clear global reference on error
+          }
+        } else {
+          console.warn(colors.yellow("⚠️ Telegram bridge disabled - missing environment variables"));
+          global.telegramBridge = null;
+        }
+      }
+    });
+
+
     /* bot is connected */
     client.once("ready", async () => {
-      // telegram bridge initialization - wait a bit for database to be fully ready
-      await new Promise((resolve) => setTimeout(resolve, 2000))
-
-      if (process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHAT_ID) {
-        try {
-          telegramBridge = new TelegramBridge(client.sock, database)
-          global.telegramBridge = telegramBridge // Set global reference immediately
-
-          await telegramBridge.initialize()
-
-          // Force reload mappings after initialization to ensure they're current
-          await telegramBridge.loadMappingsFromDb()
-          await telegramBridge.setupWhatsAppHandlers() // Setup WhatsApp handlers for the bridge
-
-          await telegramBridge.sendStartMessage()
-        } catch (error) {
-          console.error(colors.red("❌ Failed to start Telegram bridge:"), error)
-          global.telegramBridge = null // Clear global reference on error
-        }
-      } else {
-        console.warn(colors.yellow("⚠️ Telegram bridge disabled - missing environment variables"))
-        global.telegramBridge = null
-      }
+      // The Telegram bridge initialization and contact sync logic has been moved
+      // to the 'connection.update' event handler for 'open' status.
+      // This 'ready' block can now be used for other general bot initializations.
 
       /* auto restart if ram usage is over */
       const ramCheck = setInterval(() => {
@@ -385,4 +422,3 @@ const connect = async () => {
 }
 
 connect().catch(() => connect())
- 
